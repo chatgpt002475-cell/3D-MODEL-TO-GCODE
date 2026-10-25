@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D-MODEL-TO-GCODE — Automated CNC CAM Suite</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <!-- Three.js & Loaders -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+</head>
+<body>
+
+    <!-- App Header -->
+    <header class="app-header">
+        <div class="brand">
+            <span class="brand-icon">⚙️</span>
+            <span class="brand-title">3D-MODEL-TO-GCODE</span>
+            <span class="badge-version">v1.0 Automated CAM</span>
+        </div>
+        <div class="header-actions">
+            <span id="statusBadge" style="font-size: 12px; font-weight: 600; color: var(--accent-cyan);">Ready</span>
+            <a id="btnDownload" class="btn btn-success" style="display: none;">
+                📥 Download G-Code
+            </a>
+            <button id="btnCopyGCode" class="btn btn-outline">
+                📋 Copy
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <div class="app-container">
+
+        <!-- Sidebar: Upload & CAM Parameter Controls -->
+        <aside class="sidebar">
+
+            <!-- 1. Upload 3D CAD/Mesh -->
+            <div class="sidebar-section">
+                <div class="section-title">
+                    <span>1. 3D Model Input</span>
+                    <span style="font-size: 10px; color: var(--text-muted);">STEP, STL, OBJ</span>
+                </div>
+                <div id="dropzone" class="dropzone">
+                    <div class="dropzone-icon">📁</div>
+                    <div class="dropzone-text">Drag & drop 3D model here</div>
+                    <div class="dropzone-sub">or click to browse from device</div>
+                    <input type="file" id="fileInput" accept=".step,.stp,.stl,.obj,.iges,.igs" style="display: none;">
+                </div>
+                <div id="filePill" class="file-pill">
+                    <div>
+                        <strong id="fileName" style="color: var(--accent-cyan);">model.step</strong>
+                        <div id="fileSize" style="color: var(--text-muted); font-size: 11px;">0 KB</div>
+                    </div>
+                    <span style="color: var(--accent-green); font-size: 18px;">✓</span>
+                </div>
+            </div>
+
+            <!-- 2. Machine & Postprocessor -->
+            <div class="sidebar-section">
+                <div class="section-title">2. CNC Controller Post-Processor</div>
+                <div class="form-group">
+                    <select id="postSelect" class="form-control">
+                        {% for key, val in machine_presets.items() %}
+                        <option value="{{ key }}" {% if key == 'grbl' %}selected{% endif %}>
+                            {{ val.name }} ({{ val.extension }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <!-- 3. Tool & Speeds -->
+            <div class="sidebar-section">
+                <div class="section-title">3. Tool & Feeds / Speeds</div>
+                <div class="form-group">
+                    <label class="form-label">Tool Preset</label>
+                    <select id="toolPresetSelect" class="form-control">
+                        {% for key, t in tool_presets.items() %}
+                        <option value="{{ key }}" {% if key == '6mm_endmill' %}selected{% endif %}>
+                            {{ t.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label class="form-label">Tool Dia (mm)</label>
+                        <input type="number" id="toolDia" class="form-control" value="6.0" step="0.1">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Stepdown (mm)</label>
+                        <input type="number" id="stepdown" class="form-control" value="1.5" step="0.1">
+                    </div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label class="form-label">Cut Feed (mm/min)</label>
+                        <input type="number" id="feedRate" class="form-control" value="1400" step="50">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Plunge (mm/min)</label>
+                        <input type="number" id="plungeRate" class="form-control" value="450" step="50">
+                    </div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label class="form-label">Spindle (RPM)</label>
+                        <input type="number" id="spindleSpeed" class="form-control" value="12000" step="500">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Stepover (mm)</label>
+                        <input type="number" id="stepover" class="form-control" value="2.4" step="0.1">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. Operations & Stock -->
+            <div class="sidebar-section">
+                <div class="section-title">4. Machining Operations</div>
+                <div class="checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="opFacing" checked>
+                        <span>Face Mill Top Stock</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="opContour" checked>
+                        <span>2D Outer Contour Profiling</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="opSurface" checked>
+                        <span>3D Waterline Surface Finishing</span>
+                    </label>
+                </div>
+
+                <div class="form-group" style="margin-top: 14px;">
+                    <label class="form-label">Stock Padding X/Y (mm)</label>
+                    <input type="number" id="stockPad" class="form-control" value="5.0" step="0.5">
+                </div>
+
+                <!-- Generate Button -->
+                <button id="btnGenerate" class="btn btn-primary" style="width: 100%; justify-content: center; margin-top: 8px; padding: 12px;">
+                    ⚡ Generate CNC G-Code
+                </button>
+            </div>
+
+        </aside>
+
+        <!-- Main Workspace -->
+        <main class="main-workspace">
+
+            <!-- Tabs -->
+            <div class="tabs-bar">
+                <button class="tab-btn active" data-tab="tab-3d">🌐 3D Toolpath & CAD Visualizer</button>
+                <button class="tab-btn" data-tab="tab-code">📄 G-Code Program</button>
+            </div>
+
+            <!-- 3D Viewer Tab -->
+            <div id="tab-3d" class="tab-content active">
+                <div id="viewer3d">
+                    <div class="viewer-overlay">
+                        <div><strong>Orbit:</strong> Left Click + Drag</div>
+                        <div><strong>Pan:</strong> Right Click + Drag</div>
+                        <div><strong>Zoom:</strong> Scroll Wheel</div>
+                    </div>
+                    <div class="viewer-legend">
+                        <div class="legend-item">
+                            <span class="legend-dot" style="background: #00e676;"></span>
+                            <span>Cutting Moves (G1/G2/G3)</span>
+                        </div>
+                        <div class="legend-item">
+                            <span class="legend-dot" style="background: #ff3366;"></span>
+                            <span>Rapid Retracts (G0)</span>
+                        </div>
+                        <div class="legend-item">
+                            <span class="legend-dot" style="background: #00d2ff;"></span>
+                            <span>Stock Envelope</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- G-Code Tab -->
+            <div id="tab-code" class="tab-content">
+                <div class="editor-container">
+                    <textarea id="gcodeEditor" class="gcode-textarea" placeholder="(G-code program will appear here after generation...)" readonly></textarea>
+                </div>
+            </div>
+
+            <!-- Stats Bar -->
+            <footer class="stats-bar">
+                <div class="stat-item">
+                    <span class="stat-label">Model Size</span>
+                    <span id="statDim" class="stat-val">—</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Part Volume</span>
+                    <span id="statVol" class="stat-val">—</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Est. Cycle Time</span>
+                    <span id="statTime" class="stat-val" style="color: var(--accent-cyan);">—</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Cutting Path</span>
+                    <span id="statCutDist" class="stat-val" style="color: var(--accent-green);">—</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Rapid Path</span>
+                    <span id="statRapidDist" class="stat-val" style="color: var(--accent-red);">—</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">G-Code Blocks</span>
+                    <span id="statLines" class="stat-val">—</span>
+                </div>
+            </footer>
+
+        </main>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

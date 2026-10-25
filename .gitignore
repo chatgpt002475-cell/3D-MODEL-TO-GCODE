@@ -6,6 +6,7 @@ __pycache__/
 # Temporary and local runtime directories
 uploads/
 output/
+cad_output/
 .cam_cache/
 sample_output/
 

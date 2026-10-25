@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FreeCAD Automated Sketching & 3D Modeling Studio</title>
+    <link rel="stylesheet" href="/static/css/freecad.css">
+    <!-- Three.js & STLLoader -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+</head>
+<body>
+
+    <!-- Header -->
+    <header class="cad-header">
+        <div class="brand-group">
+            <span style="font-size: 24px;">📐</span>
+            <span class="brand-title">FreeCAD Modeling Studio</span>
+            <span style="font-size: 11px; color: var(--accent-cyan); background: rgba(0, 229, 255, 0.1); padding: 2px 8px; border-radius: 10px; border: 1px solid rgba(0, 229, 255, 0.3);">
+                Headless FreeCAD 1.1
+            </span>
+        </div>
+
+        <div class="header-downloads">
+            <span id="statusText" style="font-size: 12px; color: var(--text-muted); margin-right: 12px;">Ready</span>
+            <a id="dlFcstd" class="btn-dl btn-fcstd">📥 .FCStd (FreeCAD)</a>
+            <a id="dlStep" class="btn-dl btn-step">📥 .STEP (CAD)</a>
+            <a id="dlStl" class="btn-dl btn-stl">📥 .STL (3D Mesh)</a>
+        </div>
+    </header>
+
+    <!-- App Container -->
+    <div class="cad-container">
+
+        <!-- Sidebar: Command Prompt & Feature Tree -->
+        <aside class="cad-sidebar">
+
+            <!-- Prompt Console -->
+            <div class="cad-section">
+                <div class="section-label">1. Natural Language Command Prompt</div>
+                <textarea id="promptInput" class="prompt-box" placeholder="e.g. flange with outer diameter 100, bore 35, thickness 16, and 6 bolt holes on PCD 70">flange with outer diameter 100, bore 35, thickness 16, and 6 bolt holes on PCD 70</textarea>
+
+                <button id="btnBuild" class="btn-build">
+                    ⚡ Build 2D Sketch & 3D Solid
+                </button>
+
+                <div class="section-label" style="margin-top: 16px;">Quick Presets</div>
+                <div class="pill-group">
+                    <span class="preset-pill" data-prompt="flange with outer diameter 120, bore 40, thickness 15, and 6 bolt holes of diameter 10 on PCD 90">
+                        🔘 Flange & Bolt Circle
+                    </span>
+                    <span class="preset-pill" data-prompt="mounting bracket 120x80x12 with 4 corner holes 8mm and center hole 30">
+                        📦 Mounting Plate 120x80
+                    </span>
+                    <span class="preset-pill" data-prompt="box enclosure 120x80x40 with wall thickness 4mm">
+                        🗃️ Enclosure Box
+                    </span>
+                    <span class="preset-pill" data-prompt="stepped bushing outer diameter 50, inner bore 25, length 60, flange diameter 70 thickness 10">
+                        ⚙️ Stepped Bushing
+                    </span>
+                    <span class="preset-pill" data-prompt="L-bracket width 50, leg1 80, leg2 80, thickness 8, with 2 holes on each leg diameter 8">
+                        📐 L-Bracket
+                    </span>
+                </div>
+            </div>
+
+            <!-- FreeCAD Feature Tree -->
+            <div class="cad-section">
+                <div class="section-label">2. FreeCAD Parametric Tree</div>
+                <div class="feature-tree">
+                    <div class="tree-node">
+                        <span class="tree-icon">📄</span>
+                        <span>FreeCAD_Document</span>
+                    </div>
+                    <div class="tree-node" style="margin-left: 14px;">
+                        <span class="tree-icon">🔩</span>
+                        <span>PartDesign::Body</span>
+                    </div>
+                    <div class="tree-node" style="margin-left: 28px;">
+                        <span class="tree-icon">✏️</span>
+                        <span>Sketcher::SketchObject (2D Profile)</span>
+                    </div>
+                    <div class="tree-node" style="margin-left: 28px;">
+                        <span class="tree-icon">🧱</span>
+                        <span>PartDesign::Pad (3D Extrusion)</span>
+                    </div>
+                    <div class="tree-node" style="margin-left: 28px;">
+                        <span class="tree-icon">🕳️</span>
+                        <span>PartDesign::Pocket (Holes & Cavities)</span>
+                    </div>
+                </div>
+            </div>
+
+        </aside>
+
+        <!-- Main Viewport Area -->
+        <main class="cad-viewport-area">
+
+            <!-- Viewport Tabs -->
+            <div class="viewport-tabs">
+                <button class="v-tab-btn active" data-vtab="vtab-3d">🌐 3D Solid Model</button>
+                <button class="v-tab-btn" data-vtab="vtab-sketch">📐 2D Sketch Blueprint</button>
+                <button class="v-tab-btn" data-vtab="vtab-code">💻 FreeCAD Python Script</button>
+            </div>
+
+            <!-- Tab 1: 3D WebGL Canvas -->
+            <div id="vtab-3d" class="v-tab-content active">
+                <div id="freecadViewer3d">
+                    <div class="viewer-hud">
+                        <div><strong>Orbit:</strong> Left Click + Drag</div>
+                        <div><strong>Pan:</strong> Right Click + Drag</div>
+                        <div><strong>Zoom:</strong> Scroll Wheel</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 2: 2D Sketch Blueprint Canvas -->
+            <div id="vtab-sketch" class="v-tab-content">
+                <div class="sketch-container">
+                    <canvas id="sketchCanvas"></canvas>
+                </div>
+            </div>
+
+            <!-- Tab 3: Generated FreeCAD Python Script -->
+            <div id="vtab-code" class="v-tab-content">
+                <div class="code-container">
+                    <textarea id="codeEditor" class="script-editor" readonly placeholder="(FreeCAD Python script will appear here...)"></textarea>
+                </div>
+            </div>
+
+            <!-- Bottom Stats Footer -->
+            <footer class="cad-stats-footer">
+                <div class="stat-block">
+                    <span class="stat-title">Dimensions (X x Y x Z)</span>
+                    <span id="statSize" class="stat-value">—</span>
+                </div>
+                <div class="stat-block">
+                    <span class="stat-title">Solid Volume</span>
+                    <span id="statVolume" class="stat-value" style="color: var(--accent-cyan);">—</span>
+                </div>
+                <div class="stat-block">
+                    <span class="stat-title">Surface Area</span>
+                    <span id="statArea" class="stat-value" style="color: var(--accent-green);">—</span>
+                </div>
+                <div class="stat-block">
+                    <span class="stat-title">Topology</span>
+                    <span id="statTopology" class="stat-value" style="color: var(--accent-orange);">—</span>
+                </div>
+            </footer>
+
+        </main>
+    </div>
+
+    <script src="/static/js/freecad_app.js"></script>
+</body>
+</html>

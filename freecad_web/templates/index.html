@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FreeCAD Automated Sketching & 3D Modeling Studio</title>
+    <title>FreeCAD Advanced 3D CAD & Wiring Studio</title>
     <link rel="stylesheet" href="/static/css/freecad.css">
     <!-- Three.js & STLLoader -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -16,9 +16,9 @@
     <header class="cad-header">
         <div class="brand-group">
             <span style="font-size: 24px;">📐</span>
-            <span class="brand-title">FreeCAD Modeling Studio</span>
+            <span class="brand-title">FreeCAD Advanced Wiring & 3D Studio</span>
             <span style="font-size: 11px; color: var(--accent-cyan); background: rgba(0, 229, 255, 0.1); padding: 2px 8px; border-radius: 10px; border: 1px solid rgba(0, 229, 255, 0.3);">
-                Headless FreeCAD 1.1
+                OpenCASCADE B-Rep Engine
             </span>
         </div>
 
@@ -33,61 +33,62 @@
     <!-- App Container -->
     <div class="cad-container">
 
-        <!-- Sidebar: Command Prompt & Feature Tree -->
+        <!-- Sidebar: Command Prompt & Advanced Wire Wiring -->
         <aside class="cad-sidebar">
 
             <!-- Prompt Console -->
             <div class="cad-section">
-                <div class="section-label">1. Natural Language Command Prompt</div>
-                <textarea id="promptInput" class="prompt-box" placeholder="e.g. flange with outer diameter 100, bore 35, thickness 16, and 6 bolt holes on PCD 70">flange with outer diameter 100, bore 35, thickness 16, and 6 bolt holes on PCD 70</textarea>
+                <div class="section-label">1. Natural Language / Parametric Prompt</div>
+                <textarea id="promptInput" class="prompt-box" placeholder="e.g. loft square 80x80 to circle 40 at height 60 with bore 18">loft square 80x80 to circle 40 at height 60 with bore 18</textarea>
 
                 <button id="btnBuild" class="btn-build">
-                    ⚡ Build 2D Sketch & 3D Solid
+                    ⚡ Build 3D CAD with Advanced Wiring
                 </button>
 
-                <div class="section-label" style="margin-top: 16px;">Quick Presets</div>
+                <div class="section-label" style="margin-top: 16px;">Advanced Wiring Presets</div>
                 <div class="pill-group">
-                    <span class="preset-pill" data-prompt="flange with outer diameter 120, bore 40, thickness 15, and 6 bolt holes of diameter 10 on PCD 90">
-                        🔘 Flange & Bolt Circle
+                    <span class="preset-pill" data-prompt="loft square 80x80 to circle 40 at height 60 with bore 18">
+                        🌪️ Loft: Square → Round
                     </span>
-                    <span class="preset-pill" data-prompt="mounting bracket 120x80x12 with 4 corner holes 8mm and center hole 30">
-                        📦 Mounting Plate 120x80
+                    <span class="preset-pill" data-prompt="sweep pipe diameter 24 along 90 degree elbow path with radius 60 and bore 18">
+                        🔄 Sweep: 90° Elbow Pipe
+                    </span>
+                    <span class="preset-pill" data-prompt="revolve pulley diameter 80 with v-groove width 12 depth 8 and bore 20">
+                        ⚙️ Revolve: Pulley with V-Groove
+                    </span>
+                    <span class="preset-pill" data-prompt="spur gear with 16 teeth, outer diameter 60, bore 15, thickness 18">
+                        ⚙️ Spur Gear (Tooth Profile Wire)
+                    </span>
+                    <span class="preset-pill" data-prompt="bracket 120x80x10 with two slots 30x12 and 4 holes 8mm">
+                        🕳️ Plate with Oblong Slots
+                    </span>
+                    <span class="preset-pill" data-prompt="flange with outer diameter 120, bore 40, thickness 15, and 6 bolt holes on PCD 90">
+                        🔘 Flange & PCD Bolt Circle
                     </span>
                     <span class="preset-pill" data-prompt="box enclosure 120x80x40 with wall thickness 4mm">
-                        🗃️ Enclosure Box
-                    </span>
-                    <span class="preset-pill" data-prompt="stepped bushing outer diameter 50, inner bore 25, length 60, flange diameter 70 thickness 10">
-                        ⚙️ Stepped Bushing
+                        🗃️ Thin-Walled Enclosure
                     </span>
                     <span class="preset-pill" data-prompt="L-bracket width 50, leg1 80, leg2 80, thickness 8, with 2 holes on each leg diameter 8">
-                        📐 L-Bracket
+                        📐 L-Bracket Multi-Wire
                     </span>
                 </div>
             </div>
 
-            <!-- FreeCAD Feature Tree -->
+            <!-- Wire Topology Tree -->
             <div class="cad-section">
-                <div class="section-label">2. FreeCAD Parametric Tree</div>
-                <div class="feature-tree">
+                <div class="section-label">2. OpenCASCADE Wire Topology</div>
+                <div class="feature-tree" id="wireTree">
                     <div class="tree-node">
                         <span class="tree-icon">📄</span>
                         <span>FreeCAD_Document</span>
                     </div>
                     <div class="tree-node" style="margin-left: 14px;">
-                        <span class="tree-icon">🔩</span>
-                        <span>PartDesign::Body</span>
-                    </div>
-                    <div class="tree-node" style="margin-left: 28px;">
-                        <span class="tree-icon">✏️</span>
-                        <span>Sketcher::SketchObject (2D Profile)</span>
-                    </div>
-                    <div class="tree-node" style="margin-left: 28px;">
                         <span class="tree-icon">🧱</span>
-                        <span>PartDesign::Pad (3D Extrusion)</span>
+                        <span id="activeModelName">Part::Feature (Solid)</span>
                     </div>
                     <div class="tree-node" style="margin-left: 28px;">
-                        <span class="tree-icon">🕳️</span>
-                        <span>PartDesign::Pocket (Holes & Cavities)</span>
+                        <span class="tree-icon">➰</span>
+                        <span id="wireSummaryText">Outer & Inner Wire Loops</span>
                     </div>
                 </div>
             </div>
@@ -97,11 +98,23 @@
         <!-- Main Viewport Area -->
         <main class="cad-viewport-area">
 
-            <!-- Viewport Tabs -->
+            <!-- Viewport Tabs & View Controls -->
             <div class="viewport-tabs">
-                <button class="v-tab-btn active" data-vtab="vtab-3d">🌐 3D Solid Model</button>
+                <button class="v-tab-btn active" data-vtab="vtab-3d">🌐 3D Solid & CAD Wires</button>
                 <button class="v-tab-btn" data-vtab="vtab-sketch">📐 2D Sketch Blueprint</button>
+                <button class="v-tab-btn" data-vtab="vtab-wires">➰ Wire Graph Topology</button>
                 <button class="v-tab-btn" data-vtab="vtab-code">💻 FreeCAD Python Script</button>
+
+                <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
+                    <label style="font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                        <input type="checkbox" id="chkWireEdges" checked>
+                        <span>Show CAD Wire Edges</span>
+                    </label>
+                    <label style="font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 4px; cursor: pointer; margin-left: 8px;">
+                        <input type="checkbox" id="chkWireframe">
+                        <span>Wireframe Only</span>
+                    </label>
+                </div>
             </div>
 
             <!-- Tab 1: 3D WebGL Canvas -->
@@ -111,6 +124,9 @@
                         <div><strong>Orbit:</strong> Left Click + Drag</div>
                         <div><strong>Pan:</strong> Right Click + Drag</div>
                         <div><strong>Zoom:</strong> Scroll Wheel</div>
+                        <div style="margin-top: 4px; color: var(--accent-cyan); font-size: 11px;">
+                            Edges rendered from exact B-Rep geometry
+                        </div>
                     </div>
                 </div>
             </div>
@@ -122,7 +138,19 @@
                 </div>
             </div>
 
-            <!-- Tab 3: Generated FreeCAD Python Script -->
+            <!-- Tab 3: Wire Graph Topology Inspector -->
+            <div id="vtab-wires" class="v-tab-content">
+                <div style="padding: 24px; overflow-y: auto; height: 100%; background: #0c131f;">
+                    <h3 style="margin-bottom: 14px; font-size: 16px; color: var(--accent-cyan);">
+                        OpenCASCADE B-Rep Wire Graph & Boundary Loops
+                    </h3>
+                    <div id="wireGraphContainer" style="display: flex; flex-direction: column; gap: 12px;">
+                        <!-- Injected dynamically -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 4: Generated FreeCAD Python Script -->
             <div id="vtab-code" class="v-tab-content">
                 <div class="code-container">
                     <textarea id="codeEditor" class="script-editor" readonly placeholder="(FreeCAD Python script will appear here...)"></textarea>
@@ -144,7 +172,11 @@
                     <span id="statArea" class="stat-value" style="color: var(--accent-green);">—</span>
                 </div>
                 <div class="stat-block">
-                    <span class="stat-title">Topology</span>
+                    <span class="stat-title">Wire Loops</span>
+                    <span id="statWires" class="stat-value" style="color: var(--accent-cyan);">—</span>
+                </div>
+                <div class="stat-block">
+                    <span class="stat-title">B-Rep Topology</span>
                     <span id="statTopology" class="stat-value" style="color: var(--accent-orange);">—</span>
                 </div>
             </footer>

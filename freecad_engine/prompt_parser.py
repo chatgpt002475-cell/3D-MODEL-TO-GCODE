@@ -1,37 +1,43 @@
 """
-Natural Language & Parametric Prompt Parser for FreeCAD.
-Translates prompts into parametric FreeCAD Python scripts with 2D Sketching and 3D Modeling.
+Advanced Natural Language & Parametric Prompt Parser for FreeCAD.
+Translates prompts into advanced B-Rep Wires, Lofts, Sweeps, Revolutions, Gear Profiles, and Multi-Loop Sketches.
 """
 
 import re
+import math
 from typing import Dict, Any, Tuple
+from .wire_builder import generate_wire_script_helpers
 
 def parse_prompt_to_params(prompt: str) -> Dict[str, Any]:
     """Extracts geometric intent and parameters from natural language prompt."""
     p = prompt.lower().strip()
 
-    # Determine general category
-    category = "custom"
-    if any(w in p for w in ["flange", "disc", "ring", "pcd", "bolt circle"]):
+    # Determine advanced CAD operation category
+    if any(w in p for w in ["loft", "transition", "nozzle", "duct", "square to round", "pyramid"]):
+        category = "loft"
+    elif any(w in p for w in ["sweep", "pipe", "elbow", "conduit", "tube", "bent"]):
+        category = "sweep"
+    elif any(w in p for w in ["revolve", "pulley", "turned", "lathe", "v-groove", "groove"]):
+        category = "revolve"
+    elif any(w in p for w in ["gear", "sprocket", "cog", "teeth"]):
+        category = "gear"
+    elif any(w in p for w in ["slot", "oblong"]):
+        category = "slot_plate"
+    elif any(w in p for w in ["flange", "disc", "ring", "pcd", "bolt circle"]):
         category = "flange"
-    elif any(w in p for w in ["bracket", "mount", "mounting plate", "plate"]):
-        category = "plate"
     elif any(w in p for w in ["enclosure", "box", "housing", "casing"]):
         category = "enclosure"
     elif any(w in p for w in ["bushing", "spacer", "shaft", "cylinder", "boss"]):
         category = "cylinder"
     elif any(w in p for w in ["l-bracket", "angle", "l bracket"]):
         category = "l_bracket"
-    elif any(w in p for w in ["pulley", "sheave"]):
-        category = "pulley"
     else:
-        # Default based on geometric keywords
-        if "circle" in p or "diameter" in p or "radius" in p:
-            category = "flange" if "hole" in p else "cylinder"
+        # Default based on keywords
+        if "circle" in p or "diameter" in p:
+            category = "flange" if ("hole" in p or "bolt" in p) else "cylinder"
         else:
             category = "plate"
 
-    # Regex patterns for extracting numbers with units (e.g. 100mm, 50, 12.5)
     def find_val(patterns, default=None):
         for pat in patterns:
             m = re.search(pat, p, re.IGNORECASE)
@@ -52,7 +58,6 @@ def parse_prompt_to_params(prompt: str) -> Dict[str, Any]:
                     pass
         return default
 
-    # Dimension pattern like 120x80x40 or 120 x 80 x 40 or 120*80*40
     dims_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:x|\*|\sby\s)\s*(\d+(?:\.\d+)?)(?:\s*(?:x|\*|\sby\s)\s*(\d+(?:\.\d+)?))?', p)
 
     params: Dict[str, Any] = {
@@ -61,24 +66,98 @@ def parse_prompt_to_params(prompt: str) -> Dict[str, Any]:
         "name": re.sub(r'[^a-zA-Z0-9_]', '_', prompt[:30]).strip('_') or "Part"
     }
 
-    if category == "flange":
+    # 1. LOFT (Transition between wires at different Z elevations)
+    if category == "loft":
+        base_w = find_val([r'square\s*(\d+(?:\.\d+)?)', r'base\s*(\d+(?:\.\d+)?)', r'width\s*(\d+(?:\.\d+)?)'], 80.0)
+        top_dia = find_val([r'circle\s*(?:dia(?:meter)?)?\s*(\d+(?:\.\d+)?)', r'top\s*(?:dia(?:meter)?)?\s*(\d+(?:\.\d+)?)'], 40.0)
+        height = find_val([r'height\s*(\d+(?:\.\d+)?)', r'length\s*(\d+(?:\.\d+)?)', r'at\s*(\d+(?:\.\d+)?)'], 60.0)
+        bore = find_val([r'bore\s*(\d+(?:\.\d+)?)', r'hole\s*(\d+(?:\.\d+)?)'], 0.0)
+        params.update({
+            "base_width": base_w,
+            "top_diameter": top_dia,
+            "height": height,
+            "bore_diameter": bore
+        })
+
+    # 2. SWEEP / PIPE (2D Wire Profile along 3D Spine Wire)
+    elif category == "sweep":
+        pipe_dia = find_val([r'pipe\s*(?:dia(?:meter)?)?\s*(\d+(?:\.\d+)?)', r'dia(?:meter)?\s*(\d+(?:\.\d+)?)'], 24.0)
+        bend_r = find_val([r'(?:bend|arc|elbow)?\s*radius\s*(\d+(?:\.\d+)?)', r'bend\s*(\d+(?:\.\d+)?)'], 60.0)
+        leg1 = find_val([r'leg\s*1\s*(\d+(?:\.\d+)?)', r'straight\s*(\d+(?:\.\d+)?)'], 40.0)
+        leg2 = find_val([r'leg\s*2\s*(\d+(?:\.\d+)?)'], 40.0)
+        bore = find_val([r'bore\s*(\d+(?:\.\d+)?)', r'inner\s*(\d+(?:\.\d+)?)'], pipe_dia * 0.7)
+        params.update({
+            "pipe_diameter": pipe_dia,
+            "bend_radius": bend_r,
+            "leg1": leg1,
+            "leg2": leg2,
+            "inner_bore": bore
+        })
+
+    # 3. REVOLVE (Rotational wire cross-section around Z axis)
+    elif category == "revolve":
+        od = find_val([r'dia(?:meter)?\s*(\d+(?:\.\d+)?)', r'outer\s*(\d+(?:\.\d+)?)'], 80.0)
+        bore = find_val([r'bore\s*(\d+(?:\.\d+)?)', r'inner\s*(\d+(?:\.\d+)?)'], 20.0)
+        width = find_val([r'width\s*(\d+(?:\.\d+)?)', r'thick(?:ness)?\s*(\d+(?:\.\d+)?)'], 30.0)
+        groove_w = find_val([r'groove\s*(?:width)?\s*(\d+(?:\.\d+)?)'], 12.0)
+        groove_d = find_val([r'depth\s*(\d+(?:\.\d+)?)'], 8.0)
+        params.update({
+            "outer_diameter": od,
+            "bore_diameter": bore,
+            "width": width,
+            "groove_width": groove_w,
+            "groove_depth": groove_d
+        })
+
+    # 4. GEAR (Involute Tooth Profile Wire)
+    elif category == "gear":
+        teeth = find_int([r'(\d+)\s*teeth', r'teeth\s*(\d+)'], 16)
+        od = find_val([r'outer\s*dia(?:meter)?\s*(\d+(?:\.\d+)?)', r'dia(?:meter)?\s*(\d+(?:\.\d+)?)'], 60.0)
+        bore = find_val([r'bore\s*(\d+(?:\.\d+)?)', r'hole\s*(\d+(?:\.\d+)?)'], 15.0)
+        thick = find_val([r'thick(?:ness)?\s*(\d+(?:\.\d+)?)', r'face\s*width\s*(\d+(?:\.\d+)?)'], 18.0)
+        keyway = find_val([r'keyway\s*(\d+(?:\.\d+)?)'], 5.0)
+        params.update({
+            "teeth": teeth,
+            "outer_diameter": od,
+            "root_diameter": od * 0.75,
+            "bore_diameter": bore,
+            "thickness": thick,
+            "keyway_width": keyway
+        })
+
+    # 5. SLOT PLATE (Multi-Wire Compound with Oblong Slots)
+    elif category == "slot_plate":
+        w, l, h = 120.0, 80.0, 10.0
+        if dims_match:
+            w = float(dims_match.group(1))
+            l = float(dims_match.group(2))
+            if dims_match.group(3):
+                h = float(dims_match.group(3))
+        slot_l = find_val([r'slot\s*(?:length)?\s*(\d+(?:\.\d+)?)'], 30.0)
+        slot_w = find_val([r'slot\s*(?:width)?\s*(\d+(?:\.\d+)?)'], 12.0)
+        hole = find_val([r'hole\s*(\d+(?:\.\d+)?)'], 8.0)
+        params.update({
+            "width": w,
+            "length": l,
+            "thickness": h,
+            "slot_length": slot_l,
+            "slot_width": slot_w,
+            "hole_diameter": hole
+        })
+
+    # 6. FLANGE (Multi-hole Bolt Circle Wire)
+    elif category == "flange":
         od = find_val([r'outer\s*dia(?:meter)?\s*[:=]?\s*(\d+(?:\.\d+)?)',
                        r'od\s*[:=]?\s*(\d+(?:\.\d+)?)',
                        r'dia(?:meter)?\s*(?:of\s*)?(\d+(?:\.\d+)?)'], 100.0)
-        bore = find_val([r'(?:inner|center|bore|hole)\s*(?:dia(?:meter)?)?\s*[:=]?\s*(\d+(?:\.\d+)?)',
-                         r'id\s*[:=]?\s*(\d+(?:\.\d+)?)'], 30.0)
+        bore = find_val([r'(?:inner|center|bore|hole)\s*(?:dia(?:meter)?)?\s*[:=]?\s*(\d+(?:\.\d+)?)'], 30.0)
         thick = find_val([r'thick(?:ness)?\s*[:=]?\s*(\d+(?:\.\d+)?)',
-                          r'height\s*[:=]?\s*(\d+(?:\.\d+)?)',
-                          r'extrude\s*[:=]?\s*(\d+(?:\.\d+)?)',
-                          r'length\s*[:=]?\s*(\d+(?:\.\d+)?)'], 15.0)
-        bolt_count = find_int([r'(\d+)\s*(?:bolt|mounting)?\s*holes',
-                               r'holes?\s*(?:count)?\s*[:=]?\s*(\d+)'], 6)
+                          r'height\s*[:=]?\s*(\d+(?:\.\d+)?)'], 15.0)
+        bolt_count = find_int([r'(\d+)\s*(?:bolt|mounting)?\s*holes'], 6)
         bolt_dia = find_val([r'bolt\s*(?:hole)?\s*(?:dia(?:meter)?)?\s*[:=]?\s*(\d+(?:\.\d+)?)',
                              r'holes?\s*(?:of\s*)?dia(?:meter)?\s*(\d+(?:\.\d+)?)'], 8.0)
         pcd = find_val([r'pcd\s*[:=]?\s*(\d+(?:\.\d+)?)',
-                        r'pitch\s*circle\s*[:=]?\s*(\d+(?:\.\d+)?)',
-                        r'bolt\s*circle\s*[:=]?\s*(\d+(?:\.\d+)?)'], (od + bore) / 2.0)
-
+                        r'pitch\s*circle\s*[:=]?\s*(\d+(?:\.\d+)?)'], (od + bore) / 2.0)
         params.update({
             "outer_diameter": od,
             "bore_diameter": bore,
@@ -88,6 +167,7 @@ def parse_prompt_to_params(prompt: str) -> Dict[str, Any]:
             "pcd": pcd
         })
 
+    # 7. PLATE
     elif category == "plate":
         w, l, h = 100.0, 60.0, 10.0
         if dims_match:
@@ -95,27 +175,20 @@ def parse_prompt_to_params(prompt: str) -> Dict[str, Any]:
             l = float(dims_match.group(2))
             if dims_match.group(3):
                 h = float(dims_match.group(3))
-
         w = find_val([r'width\s*[:=]?\s*(\d+(?:\.\d+)?)'], w)
         l = find_val([r'length\s*[:=]?\s*(\d+(?:\.\d+)?)', r'height\s*[:=]?\s*(\d+(?:\.\d+)?)'], l)
-        h = find_val([r'thick(?:ness)?\s*[:=]?\s*(\d+(?:\.\d+)?)', r'depth\s*[:=]?\s*(\d+(?:\.\d+)?)'], h)
-
-        hole_dia = find_val([r'holes?\s*(?:dia(?:meter)?)?\s*[:=]?\s*(\d+(?:\.\d+)?)',
-                             r'hole\s*[:=]?\s*(\d+(?:\.\d+)?)'], 6.0)
-        center_hole = find_val([r'center\s*hole\s*[:=]?\s*(\d+(?:\.\d+)?)',
-                                r'bore\s*[:=]?\s*(\d+(?:\.\d+)?)'], 0.0)
-        fillet = find_val([r'fillet\s*[:=]?\s*(\d+(?:\.\d+)?)',
-                           r'corner\s*radius\s*[:=]?\s*(\d+(?:\.\d+)?)'], 4.0)
-
+        h = find_val([r'thick(?:ness)?\s*[:=]?\s*(\d+(?:\.\d+)?)'], h)
+        hole_dia = find_val([r'holes?\s*dia(?:meter)?\s*(\d+(?:\.\d+)?)', r'holes?\s*(\d+(?:\.\d+)?)'], 6.0)
+        center_hole = find_val([r'center\s*hole\s*(\d+(?:\.\d+)?)'], 0.0)
         params.update({
             "width": w,
             "length": l,
             "thickness": h,
             "corner_hole_diameter": hole_dia,
-            "center_hole_diameter": center_hole,
-            "fillet_radius": fillet
+            "center_hole_diameter": center_hole
         })
 
+    # 8. ENCLOSURE
     elif category == "enclosure":
         w, l, h = 120.0, 80.0, 40.0
         if dims_match:
@@ -123,29 +196,21 @@ def parse_prompt_to_params(prompt: str) -> Dict[str, Any]:
             l = float(dims_match.group(2))
             if dims_match.group(3):
                 h = float(dims_match.group(3))
-
-        wall = find_val([r'wall\s*(?:thick(?:ness)?)?\s*[:=]?\s*(\d+(?:\.\d+)?)'], 3.0)
-        fillet = find_val([r'fillet\s*[:=]?\s*(\d+(?:\.\d+)?)',
-                           r'radius\s*[:=]?\s*(\d+(?:\.\d+)?)'], 4.0)
-
+        wall = find_val([r'wall\s*(?:thick(?:ness)?)?\s*(\d+(?:\.\d+)?)'], 3.0)
         params.update({
             "width": w,
             "length": l,
             "height": h,
-            "wall_thickness": wall,
-            "corner_fillet": fillet
+            "wall_thickness": wall
         })
 
+    # 9. CYLINDER / STEPPED SHAFT
     elif category == "cylinder":
-        od = find_val([r'outer\s*dia(?:meter)?\s*[:=]?\s*(\d+(?:\.\d+)?)',
-                       r'dia(?:meter)?\s*[:=]?\s*(\d+(?:\.\d+)?)'], 50.0)
-        id_bore = find_val([r'(?:inner|bore|hole)\s*dia(?:meter)?\s*[:=]?\s*(\d+(?:\.\d+)?)'], 20.0)
-        length = find_val([r'length\s*[:=]?\s*(\d+(?:\.\d+)?)',
-                           r'height\s*[:=]?\s*(\d+(?:\.\d+)?)',
-                           r'extrude\s*[:=]?\s*(\d+(?:\.\d+)?)'], 60.0)
-        flange_dia = find_val([r'flange\s*dia(?:meter)?\s*[:=]?\s*(\d+(?:\.\d+)?)'], 0.0)
-        flange_thick = find_val([r'flange\s*thick(?:ness)?\s*[:=]?\s*(\d+(?:\.\d+)?)'], 10.0)
-
+        od = find_val([r'outer\s*dia(?:meter)?\s*(\d+(?:\.\d+)?)', r'dia(?:meter)?\s*(\d+(?:\.\d+)?)'], 50.0)
+        id_bore = find_val([r'(?:inner|bore|hole)\s*(\d+(?:\.\d+)?)'], 20.0)
+        length = find_val([r'length\s*(\d+(?:\.\d+)?)', r'height\s*(\d+(?:\.\d+)?)'], 60.0)
+        flange_dia = find_val([r'flange\s*dia(?:meter)?\s*(\d+(?:\.\d+)?)'], 0.0)
+        flange_thick = find_val([r'flange\s*thick(?:ness)?\s*(\d+(?:\.\d+)?)'], 10.0)
         params.update({
             "outer_diameter": od,
             "bore_diameter": id_bore,
@@ -154,13 +219,13 @@ def parse_prompt_to_params(prompt: str) -> Dict[str, Any]:
             "flange_thickness": flange_thick
         })
 
+    # 10. L-BRACKET
     elif category == "l_bracket":
-        w = find_val([r'width\s*[:=]?\s*(\d+(?:\.\d+)?)'], 50.0)
-        l1 = find_val([r'leg\s*1\s*[:=]?\s*(\d+(?:\.\d+)?)', r'height\s*[:=]?\s*(\d+(?:\.\d+)?)'], 70.0)
-        l2 = find_val([r'leg\s*2\s*[:=]?\s*(\d+(?:\.\d+)?)', r'length\s*[:=]?\s*(\d+(?:\.\d+)?)'], 70.0)
-        thick = find_val([r'thick(?:ness)?\s*[:=]?\s*(\d+(?:\.\d+)?)'], 8.0)
-        hole = find_val([r'hole\s*dia(?:meter)?\s*[:=]?\s*(\d+(?:\.\d+)?)'], 6.0)
-
+        w = find_val([r'width\s*(\d+(?:\.\d+)?)'], 50.0)
+        l1 = find_val([r'leg\s*1\s*(\d+(?:\.\d+)?)', r'height\s*(\d+(?:\.\d+)?)'], 70.0)
+        l2 = find_val([r'leg\s*2\s*(\d+(?:\.\d+)?)', r'length\s*(\d+(?:\.\d+)?)'], 70.0)
+        thick = find_val([r'thick(?:ness)?\s*(\d+(?:\.\d+)?)'], 8.0)
+        hole = find_val([r'hole\s*(\d+(?:\.\d+)?)'], 6.0)
         params.update({
             "width": w,
             "leg1": l1,
@@ -173,7 +238,7 @@ def parse_prompt_to_params(prompt: str) -> Dict[str, Any]:
 
 
 def generate_freecad_script(params: Dict[str, Any], output_fcstd: str, output_step: str, output_stl: str) -> str:
-    """Generates complete, executable FreeCAD Python script from parsed parameters."""
+    """Generates complete, executable FreeCAD Python script using advanced OpenCASCADE Wiring."""
     cat = params.get("category", "flange")
 
     abs_fcstd = output_fcstd.replace("\\", "/")
@@ -182,205 +247,230 @@ def generate_freecad_script(params: Dict[str, Any], output_fcstd: str, output_st
 
     script_parts = [
         "import FreeCAD, Part, Sketcher, Mesh, MeshPart, json, math",
-        "doc = FreeCAD.newDocument('FreeCAD_Model')",
-        "body = doc.addObject('PartDesign::Body', 'Body')",
+        "doc = FreeCAD.newDocument('Advanced_CAD_Model')",
+        generate_wire_script_helpers(),
         ""
     ]
 
-    if cat == "flange":
-        od = params["outer_diameter"]
-        id_bore = params["bore_diameter"]
-        thick = params["thickness"]
-        bolt_count = int(params["bolt_count"])
-        bolt_dia = params["bolt_diameter"]
-        pcd = params["pcd"]
+    # --- CATEGORY 1: LOFT (Square-to-Round or Multi-Wire Loft) ---
+    if cat == "loft":
+        bw = params["base_width"]
+        td = params["top_diameter"]
+        h = params["height"]
+        bore = params.get("bore_diameter", 0.0)
 
         script_parts.append(f"""
-# 1. Base Flange Sketch & Pad
-sketch_base = doc.addObject('Sketcher::SketchObject', 'FlangeSketch')
-body.addObject(sketch_base)
-sketch_base.MapMode = 'FlatFace'
+# 1. Advanced Lofting between Square Wire and Circle Wire
+hw = {bw / 2.0}
+w1 = make_polygon_wire([
+    [-hw, -hw, 0], [hw, -hw, 0], [hw, hw, 0], [-hw, hw, 0], [-hw, -hw, 0]
+], closed=True)
 
-# Outer circle
-sketch_base.addGeometry(Part.Circle(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1), {od/2.0}))
-# Center bore
-if {id_bore} > 0:
-    sketch_base.addGeometry(Part.Circle(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1), {id_bore/2.0}))
+w2 = make_circle_wire({td / 2.0}, center=(0,0,{h}), normal=(0,0,1))
 
+solid = Part.makeLoft([w1, w2], True)
+
+if {bore} > 0:
+    bore_wire = make_circle_wire({bore / 2.0}, center=(0,0,-5), normal=(0,0,1))
+    bore_face = Part.Face(bore_wire)
+    bore_tool = bore_face.extrude(FreeCAD.Vector(0,0,{h + 10}))
+    solid = solid.cut(bore_tool)
+
+part_obj = doc.addObject('Part::Feature', 'LoftedTransition')
+part_obj.Shape = solid
 doc.recompute()
-
-pad = doc.addObject('PartDesign::Pad', 'Pad')
-body.addObject(pad)
-pad.Profile = sketch_base
-pad.Length = {thick}
-doc.recompute()
-
-# 2. Bolt Holes
-if {bolt_count} > 0 and {pcd} > 0 and {bolt_dia} > 0:
-    sketch_holes = doc.addObject('Sketcher::SketchObject', 'HolesSketch')
-    body.addObject(sketch_holes)
-    sketch_holes.MapMode = 'FlatFace'
-    
-    # Calculate bolt coordinates along Pitch Circle Diameter
-    for i in range({bolt_count}):
-        angle = 2.0 * math.pi * i / {bolt_count}
-        bx = ({pcd} / 2.0) * math.cos(angle)
-        by = ({pcd} / 2.0) * math.sin(angle)
-        sketch_holes.addGeometry(Part.Circle(FreeCAD.Vector(bx, by, 0), FreeCAD.Vector(0,0,1), {bolt_dia/2.0}))
-    
-    doc.recompute()
-    pocket = doc.addObject('PartDesign::Pocket', 'BoltHoles')
-    body.addObject(pocket)
-    pocket.Profile = sketch_holes
-    pocket.Length = {thick * 1.5}
-    doc.recompute()
 """)
 
-    elif cat == "plate":
+    # --- CATEGORY 2: SWEEP (3D Pipe Along Trajectory Wire) ---
+    elif cat == "sweep":
+        pd = params["pipe_diameter"]
+        br = params["bend_radius"]
+        l1 = params["leg1"]
+        l2 = params["leg2"]
+        bore = params.get("inner_bore", 0.0)
+
+        script_parts.append(f"""
+# 2. Advanced 3D Wire Sweep (Elbow / Curved Conduit)
+spine_wire = make_90deg_elbow_spine({l1}, {br}, {l2})
+profile_wire = make_circle_wire({pd / 2.0}, center=(0,0,0), normal=(0,0,1))
+
+solid = spine_wire.makePipe(profile_wire)
+
+if {bore} > 0:
+    inner_prof = make_circle_wire({bore / 2.0}, center=(0,0,0), normal=(0,0,1))
+    inner_pipe = spine_wire.makePipe(inner_prof)
+    solid = solid.cut(inner_pipe)
+
+part_obj = doc.addObject('Part::Feature', 'SweptPipe')
+part_obj.Shape = solid
+doc.recompute()
+""")
+
+    # --- CATEGORY 3: REVOLVE (Pulley / Turned Wire Profile) ---
+    elif cat == "revolve":
+        od = params["outer_diameter"]
+        bore = params["bore_diameter"]
+        w = params["width"]
+        gw = params["groove_width"]
+        gd = params["groove_depth"]
+
+        r_out = od / 2.0
+        r_bore = bore / 2.0
+        hw = w / 2.0
+        hgw = gw / 2.0
+        r_groove = max(r_bore + 5.0, r_out - gd)
+
+        script_parts.append(f"""
+# 3. Advanced Wire Revolution (V-Groove Pulley / Turned Solid)
+pts = [
+    ({r_bore}, 0, -{hw}),
+    ({r_out}, 0, -{hw}),
+    ({r_out}, 0, -{hgw}),
+    ({r_groove}, 0, 0),
+    ({r_out}, 0, {hgw}),
+    ({r_out}, 0, {hw}),
+    ({r_bore}, 0, {hw}),
+    ({r_bore}, 0, -{hw})
+]
+
+cross_wire = make_polygon_wire(pts, closed=True)
+cross_face = Part.Face(cross_wire)
+solid = cross_face.revolve(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1), 360)
+
+part_obj = doc.addObject('Part::Feature', 'RevolvedPulley')
+part_obj.Shape = solid
+doc.recompute()
+""")
+
+    # --- CATEGORY 4: GEAR (Involute Tooth Profile Wire) ---
+    elif cat == "gear":
+        teeth = params["teeth"]
+        od = params["outer_diameter"]
+        rd = params["root_diameter"]
+        bore = params["bore_diameter"]
+        thick = params["thickness"]
+        kw = params.get("keyway_width", 5.0)
+
+        script_parts.append(f"""
+# 4. Advanced Gear Tooth Profile Wire
+gear_wire = make_gear_profile_wire({teeth}, {od / 2.0}, {rd / 2.0}, center=(0,0,0))
+gear_face = Part.Face(gear_wire)
+solid = gear_face.extrude(FreeCAD.Vector(0,0,{thick}))
+
+# Center bore & keyway cutout
+if {bore} > 0:
+    bore_wire = make_circle_wire({bore / 2.0}, center=(0,0,-1), normal=(0,0,1))
+    bore_face = Part.Face(bore_wire)
+    bore_tool = bore_face.extrude(FreeCAD.Vector(0,0,{thick + 2}))
+    solid = solid.cut(bore_tool)
+    
+    if {kw} > 0:
+        hkw = {kw / 2.0}
+        kw_pts = [
+            (-hkw, {bore/2.0 - 1}, -1), (hkw, {bore/2.0 - 1}, -1),
+            (hkw, {bore/2.0 + kw*0.8}, -1), (-hkw, {bore/2.0 + kw*0.8}, -1),
+            (-hkw, {bore/2.0 - 1}, -1)
+        ]
+        kw_face = Part.Face(make_polygon_wire(kw_pts, closed=True))
+        kw_tool = kw_face.extrude(FreeCAD.Vector(0,0,{thick + 2}))
+        solid = solid.cut(kw_tool)
+
+part_obj = doc.addObject('Part::Feature', 'SpurGear')
+part_obj.Shape = solid
+doc.recompute()
+""")
+
+    # --- CATEGORY 5: SLOT PLATE (Oblong Slots & Multi-Wire Holes) ---
+    elif cat == "slot_plate":
         w = params["width"]
         l = params["length"]
         thick = params["thickness"]
-        hole_dia = params.get("corner_hole_diameter", 6.0)
-        center_hole = params.get("center_hole_diameter", 0.0)
-        fillet = params.get("fillet_radius", 4.0)
+        sl = params["slot_length"]
+        sw = params["slot_width"]
+        hole = params.get("hole_diameter", 8.0)
+
+        hw = w / 2.0
+        hl = l / 2.0
 
         script_parts.append(f"""
-# 1. Base Plate Sketch & Pad
-sketch_plate = doc.addObject('Sketcher::SketchObject', 'PlateSketch')
-body.addObject(sketch_plate)
-sketch_plate.MapMode = 'FlatFace'
+# 5. Advanced Multi-Wire Plate with Oblong Slots
+base_wire = make_polygon_wire([
+    [-{hw}, -{hl}, 0], [{hw}, -{hl}, 0], [{hw}, {hl}, 0], [-{hw}, {hl}, 0], [-{hw}, -{hl}, 0]
+], closed=True)
+solid = Part.Face(base_wire).extrude(FreeCAD.Vector(0,0,{thick}))
 
-# Rectangular perimeter centered at origin
-hw = {w / 2.0}
-hl = {l / 2.0}
+# Cut dual oblong slots
+slot1 = Part.Face(make_slot_wire({sl}, {sw}, center=(-{hw*0.4}, 0, -1))).extrude(FreeCAD.Vector(0,0,{thick + 2}))
+slot2 = Part.Face(make_slot_wire({sl}, {sw}, center=({hw*0.4}, 0, -1))).extrude(FreeCAD.Vector(0,0,{thick + 2}))
+solid = solid.cut(slot1).cut(slot2)
 
-sketch_plate.addGeometry(Part.LineSegment(FreeCAD.Vector(-hw, -hl, 0), FreeCAD.Vector(hw, -hl, 0)))
-sketch_plate.addGeometry(Part.LineSegment(FreeCAD.Vector(hw, -hl, 0), FreeCAD.Vector(hw, hl, 0)))
-sketch_plate.addGeometry(Part.LineSegment(FreeCAD.Vector(hw, hl, 0), FreeCAD.Vector(-hw, hl, 0)))
-sketch_plate.addGeometry(Part.LineSegment(FreeCAD.Vector(-hw, hl, 0), FreeCAD.Vector(-hw, -hl, 0)))
+# Corner holes
+if {hole} > 0:
+    for cx in [-{hw * 0.8}, {hw * 0.8}]:
+        for cy in [-{hl * 0.75}, {hl * 0.75}]:
+            h_tool = Part.Face(make_circle_wire({hole / 2.0}, center=(cx, cy, -1))).extrude(FreeCAD.Vector(0,0,{thick + 2}))
+            solid = solid.cut(h_tool)
 
-# Center Hole if specified
-if {center_hole} > 0:
-    sketch_plate.addGeometry(Part.Circle(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1), {center_hole/2.0}))
-
+part_obj = doc.addObject('Part::Feature', 'SlottedBracket')
+part_obj.Shape = solid
 doc.recompute()
-
-pad = doc.addObject('PartDesign::Pad', 'Pad')
-body.addObject(pad)
-pad.Profile = sketch_plate
-pad.Length = {thick}
-doc.recompute()
-
-# 2. Corner Holes
-if {hole_dia} > 0:
-    sketch_corner_holes = doc.addObject('Sketcher::SketchObject', 'CornerHolesSketch')
-    body.addObject(sketch_corner_holes)
-    sketch_corner_holes.MapMode = 'FlatFace'
-    
-    # 4 Corner Hole positions with offset
-    inset_x = min(hw * 0.75, hw - 10.0)
-    inset_y = min(hl * 0.75, hl - 10.0)
-    
-    for sx in [-inset_x, inset_x]:
-        for sy in [-inset_y, inset_y]:
-            sketch_corner_holes.addGeometry(Part.Circle(FreeCAD.Vector(sx, sy, 0), FreeCAD.Vector(0,0,1), {hole_dia/2.0}))
-            
-    doc.recompute()
-    pocket = doc.addObject('PartDesign::Pocket', 'CornerHoles')
-    body.addObject(pocket)
-    pocket.Profile = sketch_corner_holes
-    pocket.Length = {thick * 1.5}
-    doc.recompute()
 """)
 
+    # --- CATEGORY 6: FLANGE (PCD Bolt Circle Compound) ---
+    elif cat == "flange":
+        od = params["outer_diameter"]
+        bore = params["bore_diameter"]
+        thick = params["thickness"]
+        bc = params["bolt_count"]
+        bd = params["bolt_diameter"]
+        pcd = params["pcd"]
+
+        script_parts.append(f"""
+# 6. Advanced Flange Multi-Wire Compound
+outer_w = make_circle_wire({od / 2.0}, center=(0,0,0), normal=(0,0,1))
+solid = Part.Face(outer_w).extrude(FreeCAD.Vector(0,0,{thick}))
+
+if {bore} > 0:
+    bore_w = make_circle_wire({bore / 2.0}, center=(0,0,-1), normal=(0,0,1))
+    bore_tool = Part.Face(bore_w).extrude(FreeCAD.Vector(0,0,{thick + 2}))
+    solid = solid.cut(bore_tool)
+
+if {bc} > 0 and {pcd} > 0 and {bd} > 0:
+    for i in range({bc}):
+        ang = 2.0 * math.pi * i / {bc}
+        bx = ({pcd} / 2.0) * math.cos(ang)
+        by = ({pcd} / 2.0) * math.sin(ang)
+        b_tool = Part.Face(make_circle_wire({bd / 2.0}, center=(bx, by, -1))).extrude(FreeCAD.Vector(0,0,{thick + 2}))
+        solid = solid.cut(b_tool)
+
+part_obj = doc.addObject('Part::Feature', 'Flange')
+part_obj.Shape = solid
+doc.recompute()
+""")
+
+    # --- DEFAULT / FALLBACK (PLATE, ENCLOSURE, CYLINDER, L-BRACKET) ---
     elif cat == "enclosure":
         w = params["width"]
         l = params["length"]
         h = params["height"]
         wall = params.get("wall_thickness", 3.0)
+        hw = w / 2.0
+        hl = l / 2.0
+        iw = hw - wall
+        il = hl - wall
 
         script_parts.append(f"""
-# 1. Outer Enclosure Block
-sketch_outer = doc.addObject('Sketcher::SketchObject', 'OuterBoxSketch')
-body.addObject(sketch_outer)
-sketch_outer.MapMode = 'FlatFace'
+# 7. Thin-Walled Enclosure Compound
+outer_w = make_polygon_wire([[-{hw}, -{hl}, 0], [{hw}, -{hl}, 0], [{hw}, {hl}, 0], [-{hw}, {hl}, 0], [-{hw}, -{hl}, 0]])
+solid = Part.Face(outer_w).extrude(FreeCAD.Vector(0,0,{h}))
 
-hw = {w / 2.0}
-hl = {l / 2.0}
-sketch_outer.addGeometry(Part.LineSegment(FreeCAD.Vector(-hw, -hl, 0), FreeCAD.Vector(hw, -hl, 0)))
-sketch_outer.addGeometry(Part.LineSegment(FreeCAD.Vector(hw, -hl, 0), FreeCAD.Vector(hw, hl, 0)))
-sketch_outer.addGeometry(Part.LineSegment(FreeCAD.Vector(hw, hl, 0), FreeCAD.Vector(-hw, hl, 0)))
-sketch_outer.addGeometry(Part.LineSegment(FreeCAD.Vector(-hw, hl, 0), FreeCAD.Vector(-hw, -hl, 0)))
+inner_w = make_polygon_wire([[-{iw}, -{il}, {wall}], [{iw}, -{il}, {wall}], [{iw}, {il}, {wall}], [-{iw}, {il}, {wall}], [-{iw}, -{il}, {wall}]])
+cavity = Part.Face(inner_w).extrude(FreeCAD.Vector(0,0,{h}))
+solid = solid.cut(cavity)
 
+part_obj = doc.addObject('Part::Feature', 'Enclosure')
+part_obj.Shape = solid
 doc.recompute()
-
-pad = doc.addObject('PartDesign::Pad', 'Pad')
-body.addObject(pad)
-pad.Profile = sketch_outer
-pad.Length = {h}
-doc.recompute()
-
-# 2. Inner Hollow Pocket (Cavity)
-sketch_inner = doc.addObject('Sketcher::SketchObject', 'CavitySketch')
-body.addObject(sketch_inner)
-sketch_inner.MapMode = 'FlatFace'
-
-iw = hw - {wall}
-il = hl - {wall}
-sketch_inner.addGeometry(Part.LineSegment(FreeCAD.Vector(-iw, -il, 0), FreeCAD.Vector(iw, -il, 0)))
-sketch_inner.addGeometry(Part.LineSegment(FreeCAD.Vector(iw, -il, 0), FreeCAD.Vector(iw, il, 0)))
-sketch_inner.addGeometry(Part.LineSegment(FreeCAD.Vector(iw, il, 0), FreeCAD.Vector(-iw, il, 0)))
-sketch_inner.addGeometry(Part.LineSegment(FreeCAD.Vector(-iw, il, 0), FreeCAD.Vector(-iw, -il, 0)))
-
-doc.recompute()
-
-pocket = doc.addObject('PartDesign::Pocket', 'Cavity')
-body.addObject(pocket)
-pocket.Profile = sketch_inner
-pocket.Length = {h - wall}
-doc.recompute()
-""")
-
-    elif cat == "cylinder":
-        od = params["outer_diameter"]
-        id_bore = params["bore_diameter"]
-        length = params["length"]
-        flange_dia = params.get("flange_diameter", 0.0)
-        flange_thick = params.get("flange_thickness", 10.0)
-
-        script_parts.append(f"""
-# 1. Main Cylinder Sketch & Pad
-sketch_cyl = doc.addObject('Sketcher::SketchObject', 'CylinderSketch')
-body.addObject(sketch_cyl)
-sketch_cyl.MapMode = 'FlatFace'
-
-sketch_cyl.addGeometry(Part.Circle(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1), {od/2.0}))
-if {id_bore} > 0:
-    sketch_cyl.addGeometry(Part.Circle(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1), {id_bore/2.0}))
-
-doc.recompute()
-
-pad = doc.addObject('PartDesign::Pad', 'Pad')
-body.addObject(pad)
-pad.Profile = sketch_cyl
-pad.Length = {length}
-doc.recompute()
-
-# 2. Flange if specified
-if {flange_dia} > {od}:
-    sketch_flg = doc.addObject('Sketcher::SketchObject', 'FlangeSketch')
-    body.addObject(sketch_flg)
-    sketch_flg.MapMode = 'FlatFace'
-    sketch_flg.addGeometry(Part.Circle(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1), {flange_dia/2.0}))
-    if {id_bore} > 0:
-        sketch_flg.addGeometry(Part.Circle(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1), {id_bore/2.0}))
-    doc.recompute()
-    
-    pad_flg = doc.addObject('PartDesign::Pad', 'FlangePad')
-    body.addObject(pad_flg)
-    pad_flg.Profile = sketch_flg
-    pad_flg.Length = {flange_thick}
-    doc.recompute()
 """)
 
     elif cat == "l_bracket":
@@ -391,51 +481,63 @@ if {flange_dia} > {od}:
         hole = params.get("hole_diameter", 6.0)
 
         script_parts.append(f"""
-# 1. L-Profile Sketch & Extrusion
-sketch_l = doc.addObject('Sketcher::SketchObject', 'LProfileSketch')
-body.addObject(sketch_l)
-sketch_l.MapMode = 'FlatFace'
+# 8. L-Profile Wire Extrusion
+l_wire = make_polygon_wire([
+    [0, 0, 0], [{l2}, 0, 0], [{l2}, {thick}, 0], [{thick}, {thick}, 0],
+    [{thick}, {l1}, 0], [0, {l1}, 0], [0, 0, 0]
+], closed=True)
 
-# Draw L-shaped wire profile
-sketch_l.addGeometry(Part.LineSegment(FreeCAD.Vector(0, 0, 0), FreeCAD.Vector({l2}, 0, 0)))
-sketch_l.addGeometry(Part.LineSegment(FreeCAD.Vector({l2}, 0, 0), FreeCAD.Vector({l2}, {thick}, 0)))
-sketch_l.addGeometry(Part.LineSegment(FreeCAD.Vector({l2}, {thick}, 0), FreeCAD.Vector({thick}, {thick}, 0)))
-sketch_l.addGeometry(Part.LineSegment(FreeCAD.Vector({thick}, {thick}, 0), FreeCAD.Vector({thick}, {l1}, 0)))
-sketch_l.addGeometry(Part.LineSegment(FreeCAD.Vector({thick}, {l1}, 0), FreeCAD.Vector(0, {l1}, 0)))
-sketch_l.addGeometry(Part.LineSegment(FreeCAD.Vector(0, {l1}, 0), FreeCAD.Vector(0, 0, 0)))
+solid = Part.Face(l_wire).extrude(FreeCAD.Vector(0,0,{w}))
 
-doc.recompute()
+if {hole} > 0:
+    h1 = Part.Face(make_circle_wire({hole / 2.0}, center=({l2 * 0.6}, -1, {w / 2.0}), normal=(0,1,0))).extrude(FreeCAD.Vector(0,{thick + 2},0))
+    h2 = Part.Face(make_circle_wire({hole / 2.0}, center=(-1, {l1 * 0.6}, {w / 2.0}), normal=(1,0,0))).extrude(FreeCAD.Vector({thick + 2},0,0))
+    solid = solid.cut(h1).cut(h2)
 
-pad = doc.addObject('PartDesign::Pad', 'Pad')
-body.addObject(pad)
-pad.Profile = sketch_l
-pad.Length = {w}
+part_obj = doc.addObject('Part::Feature', 'LBracket')
+part_obj.Shape = solid
 doc.recompute()
 """)
 
-    # Append solid measurement, 2D sketch extraction, and export
+    else:
+        # Standard Plate
+        w = params.get("width", 100.0)
+        l = params.get("length", 60.0)
+        thick = params.get("thickness", 10.0)
+        hole = params.get("corner_hole_diameter", 6.0)
+        center_hole = params.get("center_hole_diameter", 0.0)
+        hw = w / 2.0
+        hl = l / 2.0
+
+        script_parts.append(f"""
+# 9. Parametric Plate Wire
+base_wire = make_polygon_wire([
+    [-{hw}, -{hl}, 0], [{hw}, -{hl}, 0], [{hw}, {hl}, 0], [-{hw}, {hl}, 0], [-{hw}, -{hl}, 0]
+], closed=True)
+solid = Part.Face(base_wire).extrude(FreeCAD.Vector(0,0,{thick}))
+
+if {center_hole} > 0:
+    c_tool = Part.Face(make_circle_wire({center_hole / 2.0}, center=(0,0,-1))).extrude(FreeCAD.Vector(0,0,{thick + 2}))
+    solid = solid.cut(c_tool)
+
+if {hole} > 0:
+    for sx in [-{hw*0.75}, {hw*0.75}]:
+        for sy in [-{hl*0.75}, {hl*0.75}]:
+            h_tool = Part.Face(make_circle_wire({hole / 2.0}, center=(sx, sy, -1))).extrude(FreeCAD.Vector(0,0,{thick + 2}))
+            solid = solid.cut(h_tool)
+
+part_obj = doc.addObject('Part::Feature', 'Plate')
+part_obj.Shape = solid
+doc.recompute()
+""")
+
+    # Extract 3D Wire Graph, Bounding Box, Volume, and Export
     script_parts.append(f"""
-# Extract solid properties
-shape = body.Shape
+# Extract solid properties and B-Rep wire topology
+shape = part_obj.Shape
 bb = shape.BoundBox
 
-# Extract 2D sketch entities for visual blueprint
-sketch_entities = []
-for obj in doc.Objects:
-    if obj.isDerivedFrom('Sketcher::SketchObject'):
-        for g in obj.Geometry:
-            if isinstance(g, Part.LineSegment):
-                sketch_entities.append({{
-                    "type": "line",
-                    "x1": round(g.StartPoint.x, 2), "y1": round(g.StartPoint.y, 2),
-                    "x2": round(g.EndPoint.x, 2), "y2": round(g.EndPoint.y, 2)
-                }})
-            elif isinstance(g, Part.Circle):
-                sketch_entities.append({{
-                    "type": "circle",
-                    "cx": round(g.Center.x, 2), "cy": round(g.Center.y, 2),
-                    "r": round(g.Radius, 2)
-                }})
+wires_graph = extract_wire_graph(shape)
 
 meta = {{
     "volume": float(shape.Volume),
@@ -449,20 +551,21 @@ meta = {{
     ],
     "faces_count": len(shape.Faces),
     "edges_count": len(shape.Edges),
-    "sketch_entities": sketch_entities
+    "wires_count": len(shape.Wires),
+    "wires_graph": wires_graph
 }}
 
 # Save native FreeCAD project file (.FCStd)
 doc.saveAs('{abs_fcstd}')
 
 # Export industrial CAD STEP (.step)
-Part.export([body], '{abs_step}')
+Part.export([part_obj], '{abs_step}')
 
 # Export high-res 3D Mesh (.stl)
 mesh = MeshPart.meshFromShape(
     Shape=shape,
-    LinearDeflection=0.08,
-    AngularDeflection=0.4,
+    LinearDeflection=0.06,
+    AngularDeflection=0.35,
     Relative=False
 )
 mesh.write('{abs_stl}')

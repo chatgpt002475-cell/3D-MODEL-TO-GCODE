@@ -21,7 +21,12 @@ from cam_engine import (
     StockConfig,
     CAMSettings,
     MACHINE_PRESETS,
-    TOOL_PRESETS
+    TOOL_PRESETS,
+    is_eureka_installed,
+    get_eureka_info,
+    create_eureka_project,
+    simulate_eureka_project,
+    launch_eureka_gui
 )
 
 app = Flask(
@@ -175,6 +180,89 @@ def api_simulate():
     return jsonify({"status": "success", "simulation": res})
 
 
+@app.route("/api/eureka/status", methods=["GET"])
+def api_eureka_status():
+    """Returns Eureka 3X installation and COM automation status."""
+    return jsonify(get_eureka_info())
+
+
+@app.route("/api/eureka/create-project", methods=["POST"])
+def api_eureka_create():
+    """Generates an official Eureka 3X (.epf) project file for a G-code job."""
+    data = request.get_json(force=True)
+    gcode_filename = data.get("filename")
+    if not gcode_filename:
+        return jsonify({"error": "G-code filename required"}), 400
+
+    gcode_path = os.path.join(OUTPUT_DIR, gcode_filename)
+    if not os.path.exists(gcode_path):
+        return jsonify({"error": f"File not found: {gcode_filename}"}), 404
+
+    try:
+        stock_dims = data.get("stock_dims")
+        if stock_dims and len(stock_dims) == 3:
+            dims = (float(stock_dims[0]), float(stock_dims[1]), float(stock_dims[2]))
+        else:
+            dims = (100.0, 100.0, 30.0)
+
+        epf_filename = f"{os.path.splitext(gcode_filename)[0]}_eureka.epf"
+        out_epf = os.path.join(OUTPUT_DIR, epf_filename)
+
+        model_file = data.get("model_file")
+        if model_file and not os.path.isabs(model_file):
+            model_file = os.path.join(UPLOAD_DIR, model_file)
+
+        epf_path = create_eureka_project(
+            gcode_path=gcode_path,
+            stock_dims=dims,
+            finished_model=model_file,
+            output_epf=out_epf
+        )
+
+        return jsonify({
+            "status": "success",
+            "epf_filename": epf_filename,
+            "epf_path": epf_path,
+            "download_url": f"/api/download/{epf_filename}"
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/eureka/simulate", methods=["POST"])
+def api_eureka_simulate():
+    """Runs automated virtual machining simulation and collision detection in Eureka 3X."""
+    data = request.get_json(force=True)
+    epf_filename = data.get("epf_filename")
+    if not epf_filename:
+        return jsonify({"error": "epf_filename required"}), 400
+
+    epf_path = os.path.join(OUTPUT_DIR, epf_filename)
+    if not os.path.exists(epf_path):
+        return jsonify({"error": f"Project file not found: {epf_filename}"}), 404
+
+    try:
+        res = simulate_eureka_project(epf_path)
+        return jsonify(res)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/eureka/launch", methods=["POST"])
+def api_eureka_launch():
+    """Launches the Eureka 3X GUI with the specified project loaded."""
+    data = request.get_json(force=True)
+    epf_filename = data.get("epf_filename")
+    epf_path = os.path.join(OUTPUT_DIR, epf_filename) if epf_filename else None
+
+    try:
+        launch_eureka_gui(epf_path)
+        return jsonify({"status": "success", "message": "Eureka 3X application launched"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
+

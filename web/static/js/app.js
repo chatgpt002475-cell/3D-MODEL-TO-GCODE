@@ -137,6 +137,16 @@ function initEventListeners() {
         showToast("G-Code copied to clipboard!", "success");
     });
 
+    // Eureka 3X Buttons
+    const btnEurekaSim = document.getElementById("btnEurekaSim");
+    if (btnEurekaSim) {
+        btnEurekaSim.addEventListener("click", runEurekaVerification);
+    }
+    const btnEurekaLaunch = document.getElementById("btnEurekaLaunch");
+    if (btnEurekaLaunch) {
+        btnEurekaLaunch.addEventListener("click", launchEurekaApp);
+    }
+
     // Tool Preset Dropdown
     document.getElementById("toolPresetSelect").addEventListener("change", (e) => {
         const key = e.target.value;
@@ -323,8 +333,98 @@ function onConversionSuccess(data) {
     btnDownload.download = data.filename;
     btnDownload.style.display = "inline-flex";
 
+    // Show Eureka 3X Buttons
+    const btnESim = document.getElementById("btnEurekaSim");
+    if (btnESim) btnESim.style.display = "inline-flex";
+    const btnELaunch = document.getElementById("btnEurekaLaunch");
+    if (btnELaunch) btnELaunch.style.display = "inline-flex";
+    const statE = document.getElementById("statEureka");
+    if (statE) {
+        statE.textContent = "Ready for Check";
+        statE.style.color = "#00d2ff";
+    }
+
     // Render 3D Toolpaths
     renderToolpathsInViewer(sim.toolpaths, data.model_info);
+}
+
+function runEurekaVerification() {
+    if (!currentGCodeData) return;
+    const btn = document.getElementById("btnEurekaSim");
+    btn.disabled = true;
+    btn.textContent = "⏳ Running Eureka 3X...";
+    updateStatus("Running Eureka 3X virtual simulation...", "cyan");
+
+    // 1. Create project
+    fetch("/api/eureka/create-project", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            filename: currentGCodeData.filename,
+            stock_dims: currentGCodeData.model_info.recommended_stock.dimensions
+        })
+    })
+    .then(r => r.json())
+    .then(pdata => {
+        if (pdata.status === "success") {
+            // 2. Simulate
+            return fetch("/api/eureka/simulate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ epf_filename: pdata.epf_filename })
+            });
+        } else {
+            throw new Error(pdata.message || "Failed to create Eureka project");
+        }
+    })
+    .then(r => r.json())
+    .then(simData => {
+        btn.disabled = false;
+        btn.textContent = "🛡️ Eureka 3X Verify";
+        if (simData.status === "success") {
+            const cols = simData.collision_count;
+            if (cols === 0) {
+                const statE = document.getElementById("statEureka");
+                if (statE) {
+                    statE.textContent = "✓ 0 Collisions (Safe)";
+                    statE.style.color = "#00ff88";
+                }
+                showToast("Eureka 3X: 0 collisions detected! CNC program safe.", "success");
+                updateStatus("Eureka 3X: Verified Safe (0 Collisions)", "green");
+            } else {
+                const statE = document.getElementById("statEureka");
+                if (statE) {
+                    statE.textContent = `⚠️ ${cols} Collisions`;
+                    statE.style.color = "#ff3366";
+                }
+                showToast(`Eureka 3X: ${cols} collisions detected!`, "danger");
+                updateStatus(`Eureka 3X Warning: ${cols} collisions`, "red");
+            }
+        }
+    })
+    .catch(err => {
+        btn.disabled = false;
+        btn.textContent = "🛡️ Eureka 3X Verify";
+        showToast("Eureka 3X error: " + err.message, "danger");
+    });
+}
+
+function launchEurekaApp() {
+    if (!currentGCodeData) return;
+    const base = currentGCodeData.filename.replace(/\.[^/.]+$/, "");
+    const epf = base + "_eureka.epf";
+    fetch("/api/eureka/launch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ epf_filename: epf })
+    })
+    .then(r => r.json())
+    .then(res => {
+        showToast("Eureka 3X application launched!", "success");
+    })
+    .catch(err => {
+        showToast("Failed to launch Eureka: " + err.message, "danger");
+    });
 }
 
 // ----------------------------------------------------

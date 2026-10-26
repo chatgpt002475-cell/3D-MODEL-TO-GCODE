@@ -20,7 +20,12 @@ from cam_engine import (
     CAMSettings,
     MACHINE_PRESETS,
     TOOL_PRESETS,
-    find_freecad_cmd
+    find_freecad_cmd,
+    is_eureka_installed,
+    get_eureka_info,
+    create_eureka_project,
+    simulate_eureka_project,
+    launch_eureka_gui
 )
 
 @click.group()
@@ -270,5 +275,104 @@ def cmd_serve(host, port, open_browser):
     app.run(host=host, port=port, debug=False)
 
 
+@main.command(name="eureka-status")
+def cmd_eureka_status():
+    """Check Roboris Eureka 3X Virtual Machining installation & COM API."""
+    info = get_eureka_info()
+    click.secho(f"\n==================================================", fg="cyan", bold=True)
+    click.secho(f" ROBORIS EUREKA 3X VIRTUAL MACHINING STATUS", fg="cyan", bold=True)
+    click.secho(f"==================================================", fg="cyan", bold=True)
+    click.echo(f"Installed:      {'YES' if info['installed'] else 'NO'}")
+    click.echo(f"COM API Status: {'ACTIVE' if info['com_available'] else 'UNAVAILABLE'}")
+    click.echo(f"Binary Path:    {info['exe_path']}")
+    click.echo(f"Version:        {info['version']}")
+    if info.get("details"):
+        click.echo(f"ProgID:         {info['details'].get('prog_id', 'N/A')}")
+    click.echo("")
+
+
+@main.command(name="eureka-project")
+@click.argument("gcode_file", type=click.Path(exists=True, readable=True))
+@click.option("-m", "--model", default=None, help="Finished 3D model (STL/STEP) for design comparison")
+@click.option("-s", "--stock-mesh", default=None, help="Stock 3D mesh (STL)")
+@click.option("--stock-dims", default=None, help="Stock dimensions formatted as W,L,H in mm (e.g. 100,100,30)")
+@click.option("-o", "--output", default=None, help="Destination Eureka project (.epf) path")
+@click.option("--launch", is_flag=True, help="Launch Eureka 3X GUI with project loaded")
+def cmd_eureka_project(gcode_file, model, stock_mesh, stock_dims, output, launch):
+    """Build an official Eureka 3X Virtual Machining Project (.epf) from G-Code."""
+    try:
+        dims = None
+        if stock_dims:
+            parts = [float(x.strip()) for x in stock_dims.split(",")]
+            if len(parts) == 3:
+                dims = tuple(parts)
+
+        click.secho(f"\nCreating Eureka 3X Project (.epf) for: {gcode_file}...", fg="cyan")
+        epf_path = create_eureka_project(
+            gcode_path=gcode_file,
+            stock_dims=dims,
+            stock_stl=stock_mesh,
+            finished_model=model,
+            output_epf=output
+        )
+
+        click.secho(f"[OK] Eureka 3X Project created successfully!", fg="green", bold=True)
+        click.echo(f"Project File:   {epf_path}")
+        click.echo(f"G-Code Program: {os.path.abspath(gcode_file)}")
+        if model:
+            click.echo(f"Finished Model: {os.path.abspath(model)}")
+
+        if launch:
+            click.secho(f"\nLaunching Eureka 3X Virtual Machining GUI...", fg="yellow")
+            launch_eureka_gui(epf_path)
+
+        click.echo("")
+    except Exception as e:
+        click.secho(f"Error creating Eureka project: {e}", fg="red", err=True)
+        sys.exit(1)
+
+
+@main.command(name="eureka-sim")
+@click.argument("gcode_file", type=click.Path(exists=True, readable=True))
+@click.option("-m", "--model", default=None, help="Finished 3D model (STL/STEP)")
+@click.option("--stock-dims", default=None, help="Stock dimensions W,L,H (e.g. 100,100,30)")
+@click.option("-o", "--output-log", default=None, help="Destination log file path")
+def cmd_eureka_sim(gcode_file, model, stock_dims, output_log):
+    """Run automated headless virtual machining simulation & collision detection in Eureka 3X."""
+    try:
+        dims = None
+        if stock_dims:
+            parts = [float(x.strip()) for x in stock_dims.split(",")]
+            if len(parts) == 3:
+                dims = tuple(parts)
+
+        click.secho(f"\nStarting Eureka 3X Simulation & Verification for: {gcode_file}...", fg="cyan")
+        epf_path = create_eureka_project(
+            gcode_path=gcode_file,
+            stock_dims=dims,
+            finished_model=model
+        )
+
+        results = simulate_eureka_project(epf_path, output_log)
+
+        click.secho(f"[OK] Simulation completed!", fg="green", bold=True)
+        click.echo(f"Collision Count: {results['collision_count']}")
+        click.echo(f"Warning Count:   {results['warning_count']}")
+        click.echo(f"Logs Saved:      {results['log_file']}\n")
+
+        if results['collision_count'] > 0:
+            click.secho("[!] Collisions Detected:", fg="red", bold=True)
+            for c in results['collisions']:
+                click.echo(f"  - {c}")
+        else:
+            click.secho("[OK] No machine or workpiece collisions detected! Ready for CNC.", fg="green")
+        click.echo("")
+
+    except Exception as e:
+        click.secho(f"Error running Eureka simulation: {e}", fg="red", err=True)
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     main()
+

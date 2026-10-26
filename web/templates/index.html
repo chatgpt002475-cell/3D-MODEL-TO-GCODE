@@ -21,6 +21,12 @@
         </div>
         <div class="header-actions">
             <span id="statusBadge" style="font-size: 12px; font-weight: 600; color: var(--accent-cyan);">Ready</span>
+            <button id="btnEurekaSim" class="btn btn-outline" style="display: none; border-color: var(--accent-cyan); color: var(--accent-cyan);">
+                🛡️ Eureka 3X Verify
+            </button>
+            <button id="btnEurekaLaunch" class="btn btn-outline" style="display: none; border-color: var(--accent-green); color: var(--accent-green);">
+                🚀 Launch in Eureka 3X
+            </button>
             <a id="btnDownload" class="btn btn-success" style="display: none;">
                 📥 Download G-Code
             </a>
@@ -216,6 +222,10 @@
                 <div class="stat-item">
                     <span class="stat-label">G-Code Blocks</span>
                     <span id="statLines" class="stat-val">—</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Eureka 3X Check</span>
+                    <span id="statEureka" class="stat-val" style="color: var(--accent-green);">—</span>
                 </div>
             </footer>
 

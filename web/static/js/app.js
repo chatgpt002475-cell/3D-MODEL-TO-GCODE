@@ -361,7 +361,9 @@ function runEurekaVerification() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             filename: currentGCodeData.filename,
-            stock_dims: currentGCodeData.model_info.recommended_stock.dimensions
+            stock_dims: (currentGCodeData.model_info && currentGCodeData.model_info.recommended_stock) 
+                ? currentGCodeData.model_info.recommended_stock.dimensions 
+                : [100.0, 100.0, 30.0]
         })
     })
     .then(r => r.json())

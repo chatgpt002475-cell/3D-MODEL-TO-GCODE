@@ -11,8 +11,17 @@ from typing import Dict, Any, Optional, Tuple
 EUREKA_EXE_PATH = r"C:\Program Files\Roboris\Eureka 3X\Eureka.exe"
 EUREKA_DEFAULT_TEMPLATE = r"C:\Program Files\Roboris\Eureka 3X\default_eng.epf"
 
+def _init_com():
+    """Initializes COM apartment for the calling thread if on Windows."""
+    try:
+        import pythoncom
+        pythoncom.CoInitialize()
+    except Exception:
+        pass
+
 def get_eureka_app():
     """Connects to active Eureka instance or creates a new one."""
+    _init_com()
     import win32com.client
     try:
         return win32com.client.GetActiveObject("Eureka.Application")
@@ -21,16 +30,23 @@ def get_eureka_app():
 
 def get_eureka_project():
     """Returns Eureka.Project COM interface."""
+    _init_com()
     import win32com.client
     try:
         return win32com.client.GetActiveObject("Eureka.Project")
     except Exception:
+        pass
+    try:
         return win32com.client.Dispatch("Eureka.Project")
+    except Exception:
+        app = win32com.client.Dispatch("Eureka.Application")
+        return app.CreateObject("Project")
 
 def is_eureka_installed() -> bool:
     """Checks if Eureka 3X is installed and COM API is accessible."""
     if not os.path.exists(EUREKA_EXE_PATH):
         return False
+    _init_com()
     try:
         proj = get_eureka_project()
         return proj is not None
@@ -43,6 +59,7 @@ def get_eureka_info() -> Dict[str, Any]:
     com_available = False
     details = {}
     if installed:
+        _init_com()
         try:
             import win32com.client
             app = win32com.client.Dispatch("Eureka.Application")
@@ -70,6 +87,7 @@ def create_eureka_project(gcode_path: str,
     Automates creating a complete Eureka 3X Virtual Machining Project (.epf).
     Attaches the G-code program, raw stock shape, and finished design model.
     """
+    _init_com()
     if not is_eureka_installed():
         raise RuntimeError("Eureka 3X is not installed or COM API is unavailable.")
 
@@ -113,6 +131,7 @@ def simulate_eureka_project(epf_path: str, log_output_path: Optional[str] = None
     Runs automated virtual machining simulation and collision detection in Eureka 3X.
     Exports collision logs and status report.
     """
+    _init_com()
     if not is_eureka_installed():
         raise RuntimeError("Eureka 3X COM API not available.")
 
